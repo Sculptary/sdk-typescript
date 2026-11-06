@@ -73,6 +73,156 @@ export interface Asset {
   thumbnail_url: string | null;
 }
 
+export type Vector3 = [number, number, number];
+
+/** Collection summary. Detail and mutation responses also include ordered items. */
+export interface Collection {
+  id: string;
+  owner: Owner;
+  slug: string;
+  name: string;
+  description: string;
+  visibility: "public" | "private";
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  item_count: number;
+  viewer_can_manage: boolean;
+  items?: CollectionItem[];
+  [key: string]: unknown;
+}
+
+export interface CollectionItem {
+  repository: Repository;
+  note: string;
+  position: number;
+}
+
+export interface CollectionCreate {
+  name: string;
+  owner?: string;
+  slug?: string;
+  description?: string;
+  visibility?: "public" | "private";
+}
+
+export type CollectionUpdate = Partial<Pick<Collection, "name" | "slug" | "description" | "visibility">>;
+
+/** Viewer camera in model coordinates. */
+export interface CameraPose {
+  position: Vector3;
+  target: Vector3;
+  zoom: number;
+}
+
+/** The asset path is the comment's top-level path field. */
+export interface SpatialAnchor {
+  point: Vector3;
+  normal?: Vector3 | null;
+  camera?: CameraPose | null;
+  object?: string;
+  mesh?: string;
+  [key: string]: unknown;
+}
+
+export interface UserRef {
+  username: string;
+  display_name: string;
+  avatar_url: string;
+}
+
+/** PR comment, optionally pinned to a file, line or model point. */
+export interface Comment {
+  id: string;
+  author: UserRef | null;
+  body: string;
+  body_html: string;
+  path: string | null;
+  line: number | null;
+  commit_sha: string | null;
+  spatial_anchor: SpatialAnchor | null;
+  review_id: string | null;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface CommentOptions {
+  path?: string | null;
+  line?: number | null;
+  commitSha?: string | null;
+  spatialAnchor?: SpatialAnchor | null;
+}
+
+export interface NumericDelta {
+  base: number | null;
+  head: number | null;
+  delta: number | null;
+}
+
+export interface BoundingBox {
+  min?: Vector3;
+  max?: Vector3;
+  size?: Vector3;
+  center?: Vector3;
+}
+
+export interface MetadataDiff {
+  statistics: Record<string, NumericDelta>;
+  bounding_box: { base: BoundingBox | null; head: BoundingBox | null; size_changed: boolean };
+  materials: { added: string[]; removed: string[] };
+}
+
+/** A side or diff may be null for an added or removed model. */
+export interface AssetComparison {
+  base: Asset | null;
+  head: Asset | null;
+  status: "added" | "removed" | "modified" | "unchanged";
+  diff: MetadataDiff | null;
+  [key: string]: unknown;
+}
+
+/** Colour scale of the GLB at heatmap_url, in model units. */
+export interface Heatmap {
+  scale_min: number;
+  scale_max: number;
+  unit: string;
+  [key: string]: unknown;
+}
+
+/** Fields may be absent while running, or for failed/non-comparable models. */
+export interface DeviationSummary {
+  comparable?: boolean;
+  identical?: boolean;
+  method?: string;
+  approximate?: boolean;
+  /** Largest surface change in model units. */
+  hausdorff?: number;
+  mean_deviation?: number;
+  rms_deviation?: number;
+  tolerance?: number;
+  resolution?: number;
+  confidence?: "high" | "medium" | "low";
+  removed_surface_percent?: number;
+  added_surface_percent?: number;
+  area?: { base: number | null; head: number | null };
+  volume?: { base: number | null; head: number | null };
+  topology?: { base: { vertices: number; faces: number; euler: number }; head: { vertices: number; faces: number; euler: number } };
+  heatmap?: Heatmap;
+  notes?: string[];
+  reason?: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface GeometryComparison {
+  id: string | null;
+  status: "waiting" | "pending" | "running" | "ready" | "failed";
+  result: DeviationSummary;
+  heatmap_url: string | null;
+  [key: string]: unknown;
+}
+
 export interface TreeEntry {
   name: string;
   path: string;
@@ -116,6 +266,7 @@ export class Sculptary {
   readonly releases = new Releases(this);
   readonly pulls = new Pulls(this);
   readonly issues = new Issues(this);
+  readonly collections = new Collections(this);
 
   constructor(options: ClientOptions = {}) {
     this.host = (options.host ?? DEFAULT_HOST).replace(/\/+$/, "");
@@ -212,6 +363,48 @@ class Repos extends Resource {
   }
 }
 
+/** Curated repositories owned by a user or organization (owner/slug). */
+class Collections extends Resource {
+  /** All visible collections for a user or organization; no pagination. */
+  listFor(owner: string) {
+    return this.c.request<Collection[]>("GET", `/users/${owner}/collections`);
+  }
+  /** Collection detail including visible items, notes and positions. */
+  get(fullName: string) {
+    return this.c.request<Collection>("GET", `/collections/${fullName}`);
+  }
+  /** Omit owner to use the signed-in user's namespace. */
+  create(input: CollectionCreate) {
+    return this.c.request<Collection>("POST", "/collections", {
+      json: { name: input.name, owner: input.owner, slug: input.slug, description: input.description ?? "", visibility: input.visibility ?? "public" },
+    });
+  }
+  /** Update supplied fields; an empty description clears it. */
+  update(fullName: string, fields: CollectionUpdate) {
+    return this.c.request<Collection>("PATCH", `/collections/${fullName}`, { json: fields });
+  }
+  /** Delete the collection, leaving its repositories intact. */
+  delete(fullName: string) {
+    return this.c.request<void>("DELETE", `/collections/${fullName}`);
+  }
+  /** Add owner/repo or update its note. Omitted/null preserves a note; "" clears it. */
+  addItem(fullName: string, repository: string, note?: string | null) {
+    return this.c.request<Collection>("PUT", `/collections/${fullName}/items/${repository}`, { json: { note: note ?? null } });
+  }
+  /** Remove a repository from the collection. */
+  removeItem(fullName: string, repository: string) {
+    return this.c.request<void>("DELETE", `/collections/${fullName}/items/${repository}`);
+  }
+  /** Supply every visible repository exactly once, in the desired order. */
+  reorder(fullName: string, fullNames: string[]) {
+    return this.c.request<Collection>("POST", `/collections/${fullName}/order`, { json: { full_names: fullNames } });
+  }
+  /** All visible collections containing owner/repo; no pagination. */
+  containing(repository: string) {
+    return this.c.request<Collection[]>("GET", `/repos/${repository}/collections`);
+  }
+}
+
 class Contents extends Resource {
   async tree(fullName: string, path = "", ref?: string) {
     return (await this.c.request<{ entries: TreeEntry[] }>("GET", `/repos/${fullName}/tree`, { query: { path, ref } })).entries;
@@ -260,8 +453,15 @@ class Assets extends Resource {
       await new Promise((r) => setTimeout(r, options.intervalMs ?? 2000));
     }
   }
-  compare(fullName: string, path: string, base: string, head: string) {
-    return this.c.request<unknown>("GET", `/repos/${fullName}/asset-compare`, { query: { path, base, head } });
+  /** Compare model metadata between refs; basePath supports renamed files. */
+  compare(fullName: string, path: string, base: string, head: string, options: { basePath?: string } = {}) {
+    return this.c.request<AssetComparison>("GET", `/repos/${fullName}/asset-compare`, { query: { path, base, head, base_path: options.basePath } });
+  }
+  /** Get or start a deviation comparison. Call again while waiting/pending/running.
+   * Includes accuracy information, heatmap scale and an authenticated heatmap GLB URL.
+   */
+  geometryCompare(fullName: string, path: string, base: string, head: string, options: { basePath?: string } = {}) {
+    return this.c.request<GeometryComparison>("GET", `/repos/${fullName}/geometry-compare`, { query: { path, base, head, base_path: options.basePath } });
   }
   formats() {
     return this.c.request<{ key: string; name: string; status: string }[]>("GET", "/formats");
@@ -278,6 +478,27 @@ class Releases extends Resource {
 }
 
 class Pulls extends Resource {
+  /** All PR comments including spatial anchors, via PR detail; no pagination. */
+  async comments(fullName: string, number: number) {
+    return (await this.c.request<{ comments: Comment[] }>("GET", `/repos/${fullName}/pulls/${number}`)).comments;
+  }
+  /** Create a comment. Model anchors use point/normal/camera; path identifies the asset. */
+  comment(fullName: string, number: number, body: string, options: CommentOptions = {}) {
+    return this.c.request<Comment>("POST", `/repos/${fullName}/pulls/${number}/comments`, {
+      json: { body, path: options.path, line: options.line, commit_sha: options.commitSha, spatial_anchor: options.spatialAnchor },
+    });
+  }
+  /** Quote a source comment and reuse its path, line, commit and spatial anchor.
+   * The API has no threads/parent ID; this creates an ordinary PR comment.
+   */
+  async reply(fullName: string, number: number, commentId: string, body: string) {
+    const parent = (await this.comments(fullName, number)).find((c) => c.id === commentId);
+    if (!parent) throw new SculptaryError(404, "not_found", "Comment not found.");
+    const quote = parent.body.replace(/\r\n?/g, "\n").split("\n").map((line) => `> ${line}`).join("\n");
+    return this.comment(fullName, number, `${quote}\n\n${body}`, {
+      path: parent.path, line: parent.line, commitSha: parent.commit_sha, spatialAnchor: parent.spatial_anchor,
+    });
+  }
   async list(fullName: string, state: "open" | "closed" | "merged" = "open") {
     return (await this.c.request<{ items: unknown[] }>("GET", `/repos/${fullName}/pulls`, { query: { state } })).items;
   }
