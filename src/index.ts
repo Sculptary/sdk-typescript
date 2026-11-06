@@ -1,5 +1,5 @@
 /**
- * ShapesDB TypeScript SDK. Works in browsers, Node 18+ and edge runtimes (uses fetch).
+ * ShapesDB TypeScript SDK. Works in browsers, Node 20+ and edge runtimes (uses fetch).
  *
  *   const sdb = new ShapesDB({ token: process.env.SHAPESDB_TOKEN });
  *   const repo = await sdb.repos.get("northwind/medieval-castle");

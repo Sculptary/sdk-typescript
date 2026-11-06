@@ -1,7 +1,7 @@
 # ShapesDB TypeScript SDK
 
 Client for the [ShapesDB](https://shapesdb.com) API. No runtime dependencies; works in browsers,
-Node 18+ and edge runtimes.
+Node 20+ and edge runtimes.
 
 ```bash
 npm install github:ShapesDB/sdk-typescript
