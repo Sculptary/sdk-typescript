@@ -1,0 +1,31 @@
+{
+  "name": "@shapesdb/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for ShapesDB: version control and collaboration for 3D",
+  "license": "(MIT OR Apache-2.0)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": "github:ShapesDB/sdk-typescript",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~5.9",
+    "vitest": "^5.1.0"
+  }
+}
