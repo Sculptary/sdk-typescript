@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ShapesDB, ShapesDBError } from "../src/index";
+import { Sculptary, SculptaryError } from "../src/index";
 
 type Call = { url: string; init: RequestInit };
 
@@ -9,12 +9,12 @@ function mock(handler: (url: string, init: RequestInit) => Response) {
     calls.push({ url: String(input), init: init ?? {} });
     return handler(String(input), init ?? {});
   }) as typeof globalThis.fetch;
-  return { calls, client: new ShapesDB({ token: "sdb_pat_x", host: "https://example.test/", fetch }) };
+  return { calls, client: new Sculptary({ token: "sdb_pat_x", host: "https://example.test/", fetch }) };
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-describe("ShapesDB client", () => {
+describe("Sculptary client", () => {
   it("sends the token and builds URLs", async () => {
     const { calls, client } = mock(() => json({ full_name: "a/b" }));
     await client.repos.get("a/b");
@@ -25,7 +25,7 @@ describe("ShapesDB client", () => {
   it("raises structured errors", async () => {
     const { client } = mock(() => json({ error: { code: "not_found", message: "Repository not found." } }, 404));
     await expect(client.repos.get("a/missing")).rejects.toMatchObject({ status: 404, code: "not_found" });
-    await expect(client.repos.get("a/missing")).rejects.toBeInstanceOf(ShapesDBError);
+    await expect(client.repos.get("a/missing")).rejects.toBeInstanceOf(SculptaryError);
   });
 
   it("uploads multipart with explicit paths and the branch head", async () => {
@@ -47,9 +47,9 @@ describe("ShapesDB client", () => {
   });
 });
 
-describe.skipIf(!process.env.SHAPESDB_TEST_HOST)("live", () => {
+describe.skipIf(!process.env.SCULPTARY_TEST_HOST)("live", () => {
   it("searches public repositories", async () => {
-    const res = await new ShapesDB({ host: process.env.SHAPESDB_TEST_HOST }).search("castle");
+    const res = await new Sculptary({ host: process.env.SCULPTARY_TEST_HOST }).search("castle");
     expect(res.items.every((r) => r.visibility === "public")).toBe(true);
   });
 });

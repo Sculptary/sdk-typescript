@@ -1,13 +1,13 @@
 /**
- * ShapesDB TypeScript SDK. Works in browsers, Node 20+ and edge runtimes (uses fetch).
+ * Sculptary TypeScript SDK. Works in browsers, Node 20+ and edge runtimes (uses fetch).
  *
- *   const sdb = new ShapesDB({ token: process.env.SHAPESDB_TOKEN });
+ *   const sdb = new Sculptary({ token: process.env.SCULPTARY_TOKEN });
  *   const repo = await sdb.repos.get("northwind/medieval-castle");
  */
 
-export const DEFAULT_HOST = "https://shapesdb.com";
+export const DEFAULT_HOST = "https://sculptary.com";
 
-export class ShapesDBError extends Error {
+export class SculptaryError extends Error {
   constructor(
     public status: number,
     public code: string,
@@ -15,7 +15,7 @@ export class ShapesDBError extends Error {
     public field?: string,
   ) {
     super(message);
-    this.name = "ShapesDBError";
+    this.name = "SculptaryError";
   }
 }
 
@@ -105,7 +105,7 @@ export interface ClientOptions {
 
 type Query = Record<string, string | number | boolean | undefined | null>;
 
-export class ShapesDB {
+export class Sculptary {
   readonly host: string;
   private token?: string;
   private fetcher: typeof fetch;
@@ -146,7 +146,7 @@ export class ShapesDB {
       } catch {
         /* non-JSON error */
       }
-      throw new ShapesDBError(res.status, err.code ?? "error", err.message ?? `Request failed (${res.status})`, err.field);
+      throw new SculptaryError(res.status, err.code ?? "error", err.message ?? `Request failed (${res.status})`, err.field);
     }
     return res;
   }
@@ -168,7 +168,7 @@ export class ShapesDB {
 }
 
 class Resource {
-  constructor(protected c: ShapesDB) {}
+  constructor(protected c: Sculptary) {}
 }
 
 class Repos extends Resource {
@@ -218,7 +218,7 @@ class Contents extends Resource {
   }
   async readText(fullName: string, path: string, ref?: string): Promise<string> {
     const blob = await this.c.request<{ content: string | null }>("GET", `/repos/${fullName}/blob`, { query: { path, ref } });
-    if (blob.content === null) throw new ShapesDBError(422, "binary", `${path} is binary; use download()`);
+    if (blob.content === null) throw new SculptaryError(422, "binary", `${path} is binary; use download()`);
     return blob.content;
   }
   /** File bytes (LFS content resolved). */

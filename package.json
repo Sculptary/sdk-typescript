@@ -1,7 +1,7 @@
 {
-  "name": "@shapesdb/sdk",
+  "name": "@sculptary/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for ShapesDB: version control and collaboration for 3D",
+  "description": "TypeScript SDK for Sculptary: version control and collaboration for 3D",
   "license": "(MIT OR Apache-2.0)",
   "type": "module",
   "main": "dist/index.js",
@@ -15,7 +15,7 @@
   "files": [
     "dist"
   ],
-  "repository": "github:ShapesDB/sdk-typescript",
+  "repository": "github:Sculptary/sdk-typescript",
   "engines": {
     "node": ">=20"
   },
