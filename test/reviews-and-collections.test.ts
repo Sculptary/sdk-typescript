@@ -29,6 +29,7 @@ const comment: Comment = {
   id: "comment-1", author: { username: "alice", display_name: "Alice", avatar_url: "" },
   body: "Check this\nedge", body_html: "<p>Check this</p>", path: "models/castle.glb", line: null,
   commit_sha: "abc", spatial_anchor: anchor, review_id: null,
+  parent_id: null, resolved_at: null, resolved_by: null, replies: [],
   created_at: "2026-11-01T00:00:00Z", updated_at: "2026-11-01T00:00:00Z",
 };
 
@@ -84,7 +85,7 @@ describe("collections", () => {
 });
 
 describe("spatial comments", () => {
-  it("lists anchors via PR detail and posts comments and quoted replies", async () => {
+  it("lists anchors via PR detail and posts comments and threaded replies", async () => {
     const { calls, client } = mock((url, init) => {
       if (init.method === "GET") {
         expect(url.pathname).toBe("/api/v1/repos/alice/castle/pulls/7");
@@ -98,29 +99,35 @@ describe("spatial comments", () => {
     expect(comments[1].spatial_anchor).toBeNull();
     expect((await client.pulls.comment("alice/castle", 7, "Fix this", { path: "models/castle.glb", spatialAnchor: anchor, commitSha: "abc" })).spatial_anchor).toEqual(anchor);
     const reply = await client.pulls.reply("alice/castle", 7, "comment-1", "Fixed");
-    expect(reply.body).toBe("> Check this\n> edge\n\nFixed");
-    expect(reply.path).toBe(comment.path);
-    expect(reply.spatial_anchor).toEqual(anchor);
+    expect(reply.body).toBe("Fixed");
     expect(JSON.parse(calls.at(-1)!.init.body as string)).toEqual({
-      body: "> Check this\n> edge\n\nFixed", path: comment.path, line: null, commit_sha: "abc", spatial_anchor: anchor,
+      body: "Fixed", parent_id: "comment-1",
     });
     expect(calls.every(({ init }) => (init.headers as Record<string, string>).Authorization === "Bearer sdb_pat_x")).toBe(true);
   });
 
-  it("replies to unanchored comments and rejects a missing parent without posting", async () => {
-    const { calls, client } = mock((_url, init) => init.method === "GET"
-      ? json({ comments: [{ ...comment, spatial_anchor: null, path: null, author: null }] })
+  it("delegates missing parent validation to the API without a detail request", async () => {
+    const { calls, client } = mock((_url, init) => JSON.parse(init.body as string).parent_id === "missing"
+      ? json({ error: { code: "not_found", message: "Comment not found." } }, 404)
       : json(JSON.parse(init.body as string), 201));
-    expect((await client.pulls.reply("alice/castle", 7, "comment-1", "Done")).spatial_anchor).toBeNull();
+    expect((await client.pulls.reply("alice/castle", 7, "comment-1", "Done")).parent_id).toBe("comment-1");
     await expect(client.pulls.reply("alice/castle", 7, "missing", "Hello")).rejects.toMatchObject({ status: 404, code: "not_found" });
-    expect(calls.map(({ init }) => init.method)).toEqual(["GET", "POST", "GET"]);
+    expect(calls.map(({ init }) => init.method)).toEqual(["POST", "POST"]);
+  });
+
+  it("resolves and reopens threads and preserves nested replies", async () => {
+    const { calls, client } = mock((_url, init) => json({ ...comment, resolved_at: "2026-11-08", replies: [{ ...comment, parent_id: "comment-1" }] }));
+    expect((await client.pulls.resolve("alice/castle", "comment-1")).resolved_at).toBe("2026-11-08");
+    expect((await client.pulls.unresolve("alice/castle", "comment-1")).replies[0].parent_id).toBe("comment-1");
+    expect(calls.map(({ url }) => url.pathname)).toEqual(["/api/v1/repos/alice/castle/comments/comment-1/resolve", "/api/v1/repos/alice/castle/comments/comment-1/unresolve"]);
+    expect(calls.every(({ init }) => init.method === "POST" && init.body === "{}")).toBe(true);
   });
 });
 
 describe("model comparisons", () => {
   it("encodes refs and paths, supports renamed files and preserves all heatmap data", async () => {
     const deviation: GeometryComparison = {
-      id: "cmp-1", status: "ready", heatmap_url: "/api/v1/repos/a/b/comparisons/cmp-1/heatmap",
+        id: "cmp-1", status: "ready", heatmap_status: "ready", heatmap_url: "/api/v1/repos/a/b/comparisons/cmp-1/heatmap",
       result: { method: "sampled-surface-nearest-neighbour", confidence: "medium", resolution: 0.02, hausdorff: 0.4,
         heatmap: { scale_min: 0, scale_max: 0.4, unit: "model units" }, future_heatmap_samples: [0, 0.2, 0.4] },
     };
@@ -164,7 +171,9 @@ describe("model comparisons", () => {
 it.each([401, 403, 404, 422])("uses structured errors on new resources (%s)", async (status) => {
   const { client } = mock(() => json({ error: { code: "invalid", message: "No access", field: "name" } }, status));
   for (const operation of [() => client.collections.get("studio/kits"), () => client.collections.delete("studio/kits"),
-    () => client.pulls.comment("a/b", 1, "Hello"), () => client.assets.geometryCompare("a/b", "m.glb", "a", "b")]) {
+    () => client.pulls.comment("a/b", 1, "Hello"), () => client.pulls.reply("a/b", 1, "root", "Hello"),
+    () => client.pulls.resolve("a/b", "root"), () => client.pulls.unresolve("a/b", "root"),
+    () => client.assets.geometryCompare("a/b", "m.glb", "a", "b")]) {
     await expect(operation()).rejects.toBeInstanceOf(SculptaryError);
     await expect(operation()).rejects.toMatchObject({ status, code: "invalid", field: "name" });
   }

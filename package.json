@@ -1,6 +1,6 @@
 {
   "name": "@sculptary/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "TypeScript SDK for Sculptary: version control and collaboration for 3D",
   "license": "(MIT OR Apache-2.0)",
   "type": "module",

@@ -142,12 +142,17 @@ export interface Comment {
   commit_sha: string | null;
   spatial_anchor: SpatialAnchor | null;
   review_id: string | null;
+  parent_id: string | null;
+  resolved_at: string | null;
+  resolved_by: UserRef | null;
+  replies: Comment[];
   created_at: string;
   updated_at: string;
   [key: string]: unknown;
 }
 
 export interface CommentOptions {
+  parentId?: string;
   path?: string | null;
   line?: number | null;
   commitSha?: string | null;
@@ -220,6 +225,7 @@ export interface GeometryComparison {
   status: "waiting" | "pending" | "running" | "ready" | "failed";
   result: DeviationSummary;
   heatmap_url: string | null;
+  heatmap_status: "pending" | "ready" | "failed" | "unavailable";
   [key: string]: unknown;
 }
 
@@ -485,19 +491,20 @@ class Pulls extends Resource {
   /** Create a comment. Model anchors use point/normal/camera; path identifies the asset. */
   comment(fullName: string, number: number, body: string, options: CommentOptions = {}) {
     return this.c.request<Comment>("POST", `/repos/${fullName}/pulls/${number}/comments`, {
-      json: { body, path: options.path, line: options.line, commit_sha: options.commitSha, spatial_anchor: options.spatialAnchor },
+      json: options.parentId !== undefined ? { body, parent_id: options.parentId } : { body, path: options.path, line: options.line, commit_sha: options.commitSha, spatial_anchor: options.spatialAnchor },
     });
   }
-  /** Quote a source comment and reuse its path, line, commit and spatial anchor.
-   * The API has no threads/parent ID; this creates an ordinary PR comment.
-   */
-  async reply(fullName: string, number: number, commentId: string, body: string) {
-    const parent = (await this.comments(fullName, number)).find((c) => c.id === commentId);
-    if (!parent) throw new SculptaryError(404, "not_found", "Comment not found.");
-    const quote = parent.body.replace(/\r\n?/g, "\n").split("\n").map((line) => `> ${line}`).join("\n");
-    return this.comment(fullName, number, `${quote}\n\n${body}`, {
-      path: parent.path, line: parent.line, commitSha: parent.commit_sha, spatialAnchor: parent.spatial_anchor,
-    });
+  /** Reply to a root comment. The API validates the parent and thread depth. */
+  reply(fullName: string, number: number, commentId: string, body: string) {
+    return this.comment(fullName, number, body, { parentId: commentId });
+  }
+  /** Resolve a thread as its author, the PR author or a repository writer. */
+  resolve(fullName: string, commentId: string) {
+    return this.c.request<Comment>("POST", `/repos/${fullName}/comments/${commentId}/resolve`, { json: {} });
+  }
+  /** Reopen a resolved thread. */
+  unresolve(fullName: string, commentId: string) {
+    return this.c.request<Comment>("POST", `/repos/${fullName}/comments/${commentId}/unresolve`, { json: {} });
   }
   async list(fullName: string, state: "open" | "closed" | "merged" = "open") {
     return (await this.c.request<{ items: unknown[] }>("GET", `/repos/${fullName}/pulls`, { query: { state } })).items;

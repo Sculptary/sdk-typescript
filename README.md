@@ -36,6 +36,8 @@ const comment = await sdb.pulls.comment(repo.full_name, 1, "Round this edge", {
 });
 const comments = await sdb.pulls.comments(repo.full_name, 1);
 await sdb.pulls.reply(repo.full_name, 1, comment.id, "Fixed");
+await sdb.pulls.resolve(repo.full_name, comment.id);
+await sdb.pulls.unresolve(repo.full_name, comment.id);
 
 const metadata = await sdb.assets.compare(repo.full_name, "models/castle.glb", "v1.0.0", "main");
 const deviation = await sdb.assets.geometryCompare(repo.full_name, "models/castle.glb", "v1.0.0", "main");
@@ -49,9 +51,11 @@ once. Omitted/null notes preserve their current value; `""` clears them. Updates
 fields; `{ description: "" }` clears the description.
 
 Exported models include `Collection`, `Comment`, `SpatialAnchor`, `CameraPose`, `AssetComparison` and
-`GeometryComparison`. Spatial anchors use `point`; the comment's `path` identifies the asset. Replies
-quote the source body and reuse its anchor, path, line and commit. The API stores these as ordinary PR
-comments without threads or parent IDs.
+`GeometryComparison`. Spatial anchors use `point`; the comment's `path` identifies the asset. Version
+0.3 uses real replies through `parent_id` (`parentId` in comment options). Reply to a root comment;
+threads support one level of replies. PR detail contains root comments with nested `replies`,
+`resolved_at` and `resolved_by`. The comment author, PR author and repository writers can resolve or
+reopen a thread. Replies share the root's pin.
 
 Both comparison methods accept a final `{ basePath }` option for renamed models. Added/removed models
 can have null sides and a null metadata diff. Deviation may be `waiting`, `pending`, `running`, `ready`
