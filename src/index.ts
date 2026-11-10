@@ -5,6 +5,9 @@
  *   const repo = await sdb.repos.get("northwind/medieval-castle");
  */
 
+import { iteratePages, pageSize, type IterationOptions, type PaginationOptions, type Query } from "./pagination.js";
+export type { IterationOptions, PaginationOptions, Query } from "./pagination.js";
+
 export const DEFAULT_HOST = "https://sculptary.com";
 
 export class SculptaryError extends Error {
@@ -259,7 +262,7 @@ export interface ClientOptions {
   fetch?: typeof fetch;
 }
 
-type Query = Record<string, string | number | boolean | undefined | null>;
+export interface RequestOptions { query?: Query; json?: unknown; body?: BodyInit; redirect?: RequestRedirect; signal?: AbortSignal }
 
 export class Sculptary {
   readonly host: string;
@@ -281,13 +284,13 @@ export class Sculptary {
   }
 
   url(path: string, query?: Query): string {
-    const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
-    const s = q.toString();
-    return `${this.host}/api/v1${path}${s ? `?${s}` : ""}`;
+    const url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(path) ? path : `${this.host}/api/v1${path}`);
+    if (url.origin !== new URL(this.host).origin || url.username || url.password) throw new TypeError("API requests must use the configured host.");
+    for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
+    return url.href;
   }
 
-  async raw(method: string, path: string, init: { query?: Query; json?: unknown; body?: BodyInit; redirect?: RequestRedirect } = {}): Promise<Response> {
+  async raw(method: string, path: string, init: RequestOptions = {}): Promise<Response> {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
     let body = init.body;
@@ -295,7 +298,7 @@ export class Sculptary {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(init.json);
     }
-    const res = await this.fetcher(this.url(path, init.query), { method, headers, body, redirect: init.redirect ?? "follow" });
+    const res = await this.fetcher(this.url(path, init.query), { method, headers, body, redirect: init.redirect ?? "follow", signal: init.signal });
     if (!res.ok) {
       let err: { code?: string; message?: string; field?: string } = {};
       try {
@@ -308,7 +311,7 @@ export class Sculptary {
     return res;
   }
 
-  async request<T>(method: string, path: string, init: { query?: Query; json?: unknown; body?: BodyInit } = {}): Promise<T> {
+  async request<T>(method: string, path: string, init: RequestOptions = {}): Promise<T> {
     const res = await this.raw(method, path, init);
     if (res.status === 204) return undefined as T;
     const text = await res.text();
@@ -322,6 +325,15 @@ export class Sculptary {
   async search(q = "", filters: Query = {}): Promise<{ total: number; items: Repository[] }> {
     return this.request("GET", "/search/repositories", { query: { q, ...filters } });
   }
+
+  /** Lazy pages. key: null selects an array response; the default key is items. */
+  async *paginate<T>(path: string, options: PaginationOptions = {}): AsyncGenerator<T> {
+    yield* iteratePages<T>(new URL(this.url(path, options.query)), url => this.raw("GET", url, { signal: options.signal }), options);
+  }
+
+  async *iterSearch(q = "", filters: Query = {}, options: IterationOptions = {}): AsyncGenerator<Repository> {
+    yield* this.paginate<Repository>("/search/repositories", { ...options, perPage: pageSize(options, 50), query: { q, ...filters } });
+  }
 }
 
 class Resource {
@@ -329,6 +341,12 @@ class Resource {
 }
 
 class Repos extends Resource {
+  iterMine(options: IterationOptions = {}) { return this.c.paginate<Repository>("/user/repos", { ...options, key: null }); }
+  iterFor(owner: string, options: IterationOptions = {}) { return this.c.paginate<Repository>(`/users/${owner}/repos`, { ...options, key: null }); }
+  async *iterBranches(fullName: string) { yield* await this.branches(fullName); }
+  async *iterCommits(fullName: string, filters: { ref?: string; path?: string } = {}, options: IterationOptions = {}) {
+    yield* this.c.paginate<Commit>(`/repos/${fullName}/commits`, { ...options, perPage: pageSize(options, 100), key: "commits", query: filters });
+  }
   get(fullName: string) {
     return this.c.request<Repository>("GET", `/repos/${fullName}`);
   }
@@ -371,6 +389,8 @@ class Repos extends Resource {
 
 /** Curated repositories owned by a user or organization (owner/slug). */
 class Collections extends Resource {
+  async *iterFor(owner: string) { yield* await this.listFor(owner); }
+  async *iterContaining(repository: string) { yield* await this.containing(repository); }
   /** All visible collections for a user or organization; no pagination. */
   listFor(owner: string) {
     return this.c.request<Collection[]>("GET", `/users/${owner}/collections`);
@@ -412,6 +432,7 @@ class Collections extends Resource {
 }
 
 class Contents extends Resource {
+  async *iterTree(fullName: string, path = "", ref?: string) { yield* await this.tree(fullName, path, ref); }
   async tree(fullName: string, path = "", ref?: string) {
     return (await this.c.request<{ entries: TreeEntry[] }>("GET", `/repos/${fullName}/tree`, { query: { path, ref } })).entries;
   }
@@ -444,6 +465,8 @@ class Contents extends Resource {
 }
 
 class Assets extends Resource {
+  async *iter(fullName: string, ref?: string) { yield* await this.list(fullName, ref); }
+  async *iterFormats() { yield* await this.formats(); }
   async list(fullName: string, ref?: string) {
     return (await this.c.request<{ commit: string; assets: Asset[] }>("GET", `/repos/${fullName}/assets`, { query: { ref } })).assets;
   }
@@ -475,6 +498,9 @@ class Assets extends Resource {
 }
 
 class Releases extends Resource {
+  async *iter(fullName: string, options: IterationOptions = {}) {
+    yield* this.c.paginate<unknown>(`/repos/${fullName}/releases`, { ...options, perPage: pageSize(options, 100), key: null });
+  }
   list(fullName: string) {
     return this.c.request<unknown[]>("GET", `/repos/${fullName}/releases`);
   }
@@ -484,6 +510,10 @@ class Releases extends Resource {
 }
 
 class Pulls extends Resource {
+  async *iter(fullName: string, state: "open" | "closed" | "merged" = "open", options: IterationOptions & { filters?: Query } = {}) {
+    yield* this.c.paginate<unknown>(`/repos/${fullName}/pulls`, { ...options, perPage: pageSize(options, 100), query: { state, ...options.filters } });
+  }
+  async *iterComments(fullName: string, number: number) { yield* await this.comments(fullName, number); }
   /** All PR comments including spatial anchors, via PR detail; no pagination. */
   async comments(fullName: string, number: number) {
     return (await this.c.request<{ comments: Comment[] }>("GET", `/repos/${fullName}/pulls/${number}`)).comments;
@@ -520,6 +550,9 @@ class Pulls extends Resource {
 }
 
 class Issues extends Resource {
+  async *iter(fullName: string, state: "open" | "closed" = "open", options: IterationOptions & { filters?: Query } = {}) {
+    yield* this.c.paginate<unknown>(`/repos/${fullName}/issues`, { ...options, perPage: pageSize(options, 100), query: { state, ...options.filters } });
+  }
   async list(fullName: string, state: "open" | "closed" = "open") {
     return (await this.c.request<{ items: unknown[] }>("GET", `/repos/${fullName}/issues`, { query: { state } })).items;
   }

@@ -3,7 +3,7 @@
 Client for the [Sculptary](https://sculptary.com) API. No runtime dependencies; works in browsers,
 Node 20+ and edge runtimes.
 
-Version 0.2 adds collections, spatial PR comments and surface deviation comparisons.
+Version 0.4 adds lazy async iterators for complete listings.
 
 ```bash
 npm install github:Sculptary/sdk-typescript
@@ -63,6 +63,45 @@ or `failed`; call again while processing. Measurements include `method`, `confid
 and `hausdorff` (largest change in model units). Non-comparable/failed results include `reason` or
 `error`. Heatmap data consists of the scale in `result.heatmap` and an authenticated GLB URL in
 `heatmap_url`, rather than an inline array. Unknown server fields are preserved.
+
+## Iterate complete lists
+
+List methods still return one response. Use an iterator to traverse all pages without loading the
+whole list into memory. Breaking the loop prevents the next page from being fetched.
+
+```ts
+for await (const repo of sdb.iterSearch("castle", { format: "glb" })) {
+  console.log(repo.full_name);
+}
+for await (const repo of sdb.repos.iterMine({ perPage: 100 })) {
+  console.log(repo.full_name);
+}
+const controller = new AbortController();
+for await (const issue of sdb.issues.iter("northwind/castle", "closed", {
+  perPage: 50, filters: { label: "bug" }, signal: controller.signal,
+})) {
+  console.log(issue);
+}
+```
+
+Paged helpers are `iterSearch`, `repos.iterMine`, `repos.iterFor`, `repos.iterCommits`,
+`issues.iter`, `pulls.iter` and `releases.iter`. Search defaults to 50 entries per page, with a
+maximum of 50. Other helpers default to 100; repository lists allow up to 200, and the others
+allow up to 100. Commit filters accept `{ ref, path }`; use an immutable commit for repeatable
+history. Live lists can change between requests.
+
+Complete, unpaged helpers are `repos.iterBranches`, `contents.iterTree`, `assets.iter`,
+`assets.iterFormats`, `collections.iterFor`, `collections.iterContaining` and `pulls.iterComments`.
+Comment iteration yields root comments with nested replies. These helpers fetch one complete
+response when iteration begins.
+
+The generic `paginate<T>(path, { query, key, perPage, signal })` supports other paginated endpoints.
+The default `key` is `items`; use `key: null` for array responses or `key: "commits"` for history.
+Iterators require the platform's pagination headers or explicit JSON metadata. They reject missing
+metadata, malformed pages, external links and cycles instead of silently truncating results.
+Absolute API request URLs must use the configured host. `raw` and `request` also accept `signal`.
+Browser use requires a same-origin API or a host that explicitly permits the application's origin
+and exposes `Link`, `X-Has-More` and `Retry-After` response headers.
 
 Run `pnpm test`, `pnpm typecheck` and `pnpm build`. Tests use mocked fetch; live read-only tests are
 opt-in through `SCULPTARY_TEST_HOST`.
