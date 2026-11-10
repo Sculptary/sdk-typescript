@@ -13,7 +13,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "repository": "github:Sculptary/sdk-typescript",
   "engines": {
@@ -23,6 +25,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:browser": "pnpm build && playwright test",
+    "test:package": "pnpm build && node test/package-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

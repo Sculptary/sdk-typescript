@@ -131,5 +131,7 @@ Native Node HTTP tests also cover interrupted responses, redirects, multipart up
 pagination. Install test browsers with `pnpm exec playwright install chromium firefox`, then run
 `pnpm test:browser` for same-origin and CORS checks in Chromium and Firefox. Browser tests import
 the built ESM package directly. GitHub CI runs Node 20, 22 and 24 plus both browsers.
+`pnpm test:package` installs the packed archive offline in an isolated consumer and checks ESM
+imports, retries, iteration, licence texts and TypeScript declarations with NodeNext resolution.
 
 Licensed under MIT or Apache-2.0, at your option.
