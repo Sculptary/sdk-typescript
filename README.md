@@ -3,7 +3,7 @@
 Client for the [Sculptary](https://sculptary.com) API. No runtime dependencies; works in browsers,
 Node 20+ and edge runtimes.
 
-Version 0.4 adds lazy async iterators for complete listings.
+Version 0.4 adds lazy async iterators and bounded retries for idempotent requests.
 
 ```bash
 npm install github:Sculptary/sdk-typescript
@@ -103,7 +103,33 @@ Absolute API request URLs must use the configured host. `raw` and `request` also
 Browser use requires a same-origin API or a host that explicitly permits the application's origin
 and exposes `Link`, `X-Has-More` and `Retry-After` response headers.
 
+## Retry transient failures
+
+The client retries GET, HEAD, OPTIONS, PUT and DELETE when the body can be replayed. Defaults are
+two retries, a 500 ms initial backoff, and a 30 second maximum delay. Backoff grows exponentially
+with full jitter. Transient failures include fetch network errors and HTTP 408, 429, 500, 502, 503
+and 504. Other HTTP errors, cancellation, POST, PATCH, multipart bodies and one-shot streams are
+never retried.
+
+```ts
+const client = new Sculptary({
+  token, maxRetries: 2, retryBaseDelayMs: 500, retryMaxDelayMs: 30_000,
+});
+```
+
+Set `maxRetries: 0` to disable retries. Valid `Retry-After` seconds or dates take precedence over
+backoff; if the requested delay exceeds `retryMaxDelayMs`, the original server error is returned
+immediately. JSON and byte bodies are captured before the first attempt. Buffered JSON requests,
+pagination and downloads share one retry budget across response headers and interrupted bodies.
+`raw` returns a live `Response`: once returned, reading that body belongs to the caller and is
+outside the retry loop. All retry delays stop when the request's `AbortSignal` is aborted. The
+last server or network error is preserved when retries run out.
+
 Run `pnpm test`, `pnpm typecheck` and `pnpm build`. Tests use mocked fetch; live read-only tests are
 opt-in through `SCULPTARY_TEST_HOST`.
+Native Node HTTP tests also cover interrupted responses, redirects, multipart uploads and complete
+pagination. Install test browsers with `pnpm exec playwright install chromium firefox`, then run
+`pnpm test:browser` for same-origin and CORS checks in Chromium and Firefox. Browser tests import
+the built ESM package directly. GitHub CI runs Node 20, 22 and 24 plus both browsers.
 
 Licensed under MIT or Apache-2.0, at your option.

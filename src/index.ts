@@ -6,21 +6,13 @@
  */
 
 import { iteratePages, pageSize, type IterationOptions, type PaginationOptions, type Query } from "./pagination.js";
+import { backoff, RetryPolicy, retryStatuses, snapshot, type RetryOptions } from "./retry.js";
+import { SculptaryError } from "./errors.js";
+export { SculptaryError } from "./errors.js";
 export type { IterationOptions, PaginationOptions, Query } from "./pagination.js";
+export type { RetryOptions } from "./retry.js";
 
 export const DEFAULT_HOST = "https://sculptary.com";
-
-export class SculptaryError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string,
-    public field?: string,
-  ) {
-    super(message);
-    this.name = "SculptaryError";
-  }
-}
 
 export interface Owner {
   slug: string;
@@ -256,7 +248,7 @@ export interface Commit {
   committer: { name: string; email: string; date: string };
 }
 
-export interface ClientOptions {
+export interface ClientOptions extends RetryOptions {
   token?: string;
   host?: string;
   fetch?: typeof fetch;
@@ -268,6 +260,7 @@ export class Sculptary {
   readonly host: string;
   private token?: string;
   private fetcher: typeof fetch;
+  private retry: RetryPolicy;
 
   readonly repos = new Repos(this);
   readonly contents = new Contents(this);
@@ -281,6 +274,7 @@ export class Sculptary {
     this.host = (options.host ?? DEFAULT_HOST).replace(/\/+$/, "");
     this.token = options.token;
     this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.retry = new RetryPolicy(options);
   }
 
   url(path: string, query?: Query): string {
@@ -291,6 +285,12 @@ export class Sculptary {
   }
 
   async raw(method: string, path: string, init: RequestOptions = {}): Promise<Response> {
+    return this.perform(method, path, init, async response => response);
+  }
+
+  private async perform<T>(method: string, path: string, init: RequestOptions, consume: (response: Response) => Promise<T>): Promise<T> {
+    method = method.toUpperCase();
+    const url = this.url(path, init.query);
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
     let body = init.body;
@@ -298,24 +298,58 @@ export class Sculptary {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(init.json);
     }
-    const res = await this.fetcher(this.url(path, init.query), { method, headers, body, redirect: init.redirect ?? "follow", signal: init.signal });
-    if (!res.ok) {
-      let err: { code?: string; message?: string; field?: string } = {};
+    const saved = snapshot(body);
+    for (let attempt = 0; ; attempt++) {
+      init.signal?.throwIfAborted();
+      let response: Response | undefined;
+      let delay: number | undefined;
       try {
-        err = ((await res.json()) as { error?: typeof err }).error ?? {};
-      } catch {
-        /* non-JSON error */
+        const request: RequestInit & { duplex?: "half" } = { method, headers, body: saved.body, redirect: init.redirect ?? "follow", signal: init.signal };
+        if (saved.body instanceof ReadableStream) request.duplex = "half";
+        response = await this.fetcher(url, request);
+        init.signal?.throwIfAborted();
+        if (retryStatuses.has(response.status) && this.retry.permits(method, attempt, saved.replayable)) delay = this.retry.delay(attempt, response);
+        if (delay === undefined) {
+          if (!response.ok) throw await this.responseError(response);
+          const value = await consume(response);
+          init.signal?.throwIfAborted();
+          return value;
+        }
+      } catch (error) {
+        await response?.body?.cancel().catch(() => {});
+        init.signal?.throwIfAborted();
+        if (!(error instanceof TypeError) || !this.retry.permits(method, attempt, saved.replayable)) throw error;
+        delay = this.retry.delay(attempt);
       }
-      throw new SculptaryError(res.status, err.code ?? "error", err.message ?? `Request failed (${res.status})`, err.field);
+      await response?.body?.cancel().catch(() => {});
+      await backoff(delay!, init.signal);
     }
-    return res;
+  }
+
+  private async responseError(response: Response): Promise<SculptaryError> {
+    let error: Record<string, unknown> = {};
+    try {
+      const data = await response.json();
+      if (data?.error && typeof data.error === "object" && !Array.isArray(data.error)) error = data.error;
+    } catch { /* Preserve the status without exposing unstructured response bodies. */ }
+    return new SculptaryError(response.status, typeof error.code === "string" ? error.code : "error",
+      typeof error.message === "string" ? error.message : `Request failed (${response.status})`, typeof error.field === "string" ? error.field : undefined);
   }
 
   async request<T>(method: string, path: string, init: RequestOptions = {}): Promise<T> {
-    const res = await this.raw(method, path, init);
-    if (res.status === 204) return undefined as T;
-    const text = await res.text();
-    return (text ? JSON.parse(text) : undefined) as T;
+    return this.perform(method, path, init, response => this.readJSON<T>(response));
+  }
+
+  private async readJSON<T>(response: Response): Promise<T> {
+    if (response.status === 204) return undefined as T;
+    const text = await response.text();
+    try { return (text ? JSON.parse(text) : undefined) as T; }
+    catch { throw new SculptaryError(502, "invalid_response", "The server returned invalid JSON."); }
+  }
+
+  /** Buffered download. The retry budget includes failures while reading the body. */
+  async download(path: string, init: RequestOptions = {}): Promise<ArrayBuffer> {
+    return this.perform("GET", path, init, response => response.arrayBuffer());
   }
 
   me() {
@@ -328,7 +362,7 @@ export class Sculptary {
 
   /** Lazy pages. key: null selects an array response; the default key is items. */
   async *paginate<T>(path: string, options: PaginationOptions = {}): AsyncGenerator<T> {
-    yield* iteratePages<T>(new URL(this.url(path, options.query)), url => this.raw("GET", url, { signal: options.signal }), options);
+    yield* iteratePages<T>(new URL(this.url(path, options.query)), url => this.perform("GET", url, { signal: options.signal }, async response => ({ response, data: await this.readJSON<unknown>(response) })), options);
   }
 
   async *iterSearch(q = "", filters: Query = {}, options: IterationOptions = {}): AsyncGenerator<Repository> {
@@ -443,8 +477,7 @@ class Contents extends Resource {
   }
   /** File bytes (LFS content resolved). */
   async download(fullName: string, path: string, ref?: string): Promise<ArrayBuffer> {
-    const res = await this.c.raw("GET", `/repos/${fullName}/raw`, { query: { path, ref, download: true } });
-    return res.arrayBuffer();
+    return this.c.download(`/repos/${fullName}/raw`, { query: { path, ref, download: true } });
   }
   /** Commit files in one commit. Keys are repository paths. Model files are stored with Git LFS. */
   async upload(fullName: string, files: Record<string, Blob | ArrayBuffer | Uint8Array | string>, options: { message: string; branch?: string; expectedHead?: string; newBranch?: string }) {

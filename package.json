@@ -1,6 +1,6 @@
 {
   "name": "@sculptary/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "TypeScript SDK for Sculptary: version control and collaboration for 3D",
   "license": "(MIT OR Apache-2.0)",
   "type": "module",
@@ -22,9 +22,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:browser": "pnpm build && playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "typescript": "~5.9",
     "vitest": "^5.1.0"
   }

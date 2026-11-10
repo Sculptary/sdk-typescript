@@ -1,4 +1,4 @@
-import { SculptaryError } from "./index.js";
+import { SculptaryError } from "./errors.js";
 
 export type Query = Record<string, string | number | boolean | undefined | null>;
 export interface IterationOptions { perPage?: number; signal?: AbortSignal }
@@ -27,7 +27,7 @@ function nextLink(header: string | null): string | undefined {
   }
 }
 
-export async function* iteratePages<T>(initial: URL, load: (url: string) => Promise<Response>, options: PaginationOptions): AsyncGenerator<T> {
+export async function* iteratePages<T>(initial: URL, load: (url: string) => Promise<{ response: Response; data: unknown }>, options: PaginationOptions): AsyncGenerator<T> {
   const size = pageSize(options);
   if (options.query && ("page" in options.query || "per_page" in options.query)) throw new TypeError("The iterator manages page and per_page.");
   let url = new URL(initial);
@@ -39,8 +39,7 @@ export async function* iteratePages<T>(initial: URL, load: (url: string) => Prom
     options.signal?.throwIfAborted();
     if (url.origin !== initial.origin || url.username || url.password || seen.has(urlKey(url))) throw invalid();
     seen.add(urlKey(url));
-    const response = await load(url.href);
-    const data: unknown = await response.json();
+    const { response, data } = await load(url.href);
     const meta = data !== null && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
     const items = key === null ? data : meta[key];
     if (!Array.isArray(items)) throw invalid();
