@@ -3,11 +3,24 @@
 Client for the [Sculptary](https://sculptary.com) API. No runtime dependencies; works in browsers,
 Node 20+ and edge runtimes.
 
-Version 0.4 adds lazy async iterators and bounded retries for idempotent requests.
+## Install
+
+Download `sculptary-sdk-0.4.0.tgz` and `SHA256SUMS` from the
+[0.4.0 release](https://github.com/Sculptary/sdk-typescript/releases/tag/v0.4.0).
+Verify the archive's SHA-256 against the manifest, then install the local file:
 
 ```bash
-npm install github:Sculptary/sdk-typescript
+npm install ./sculptary-sdk-0.4.0.tgz
 ```
+
+The archive includes built JavaScript, declarations and both licence texts.
+An installation directly from the Git repository requires a separate build.
+npm publication is pending. Configure `host` for your Sculptary instance; the
+package does not provision a hosted service.
+
+## Usage
+
+Version 0.4 adds lazy async iterators and bounded retries for idempotent requests.
 
 ```ts
 import { Sculptary } from "@sculptary/sdk";
